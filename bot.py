@@ -4,14 +4,23 @@ import re
 import json
 import os
 import time
+from datetime import datetime, timedelta
 
 # ============== KONFIGURASI ==============
 BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"  # Ganti dengan token bot Anda
 ADMIN_IDS = [123456789]  # Ganti dengan ID Telegram Anda
-MIN_MEMBER_PREMIUM = 500
+MIN_MEMBER_PREMIUM = 2
 QRIS_PHOTO_PATH = "qris.png"  # Pastikan file qris.png ada di folder yang sama
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None)
+
+SEWA_PRICES = {
+    "1": {"price": 1000, "text": "1 Hari"},
+    "3": {"price": 2500, "text": "3 Hari"},
+    "7": {"price": 5000, "text": "7 Hari"},
+    "14": {"price": 8000, "text": "14 Hari"},
+    "30": {"price": 15000, "text": "30 Hari"}
+}
 
 # ============== STORAGE ==============
 STATE_FILE = "bot_state.json"
@@ -24,7 +33,7 @@ data_store = {
     "pending_rekap": {},
     "premium_groups": {}, 
     "chat_settings": {},
-    "pending_payment": {}, # Menyimpan data user yang sedang dalam proses bayar
+    "pending_payment": {},
 }
 
 def load_state():
@@ -59,28 +68,50 @@ def save_state():
 
 load_state()
 
-# ============== PARSER OTOMATIS ==============
+# ============== PARSER OTOMATIS SUPER POWERFUL ==============
 def parse_duel_data(text):
     teams = {"KECIL": [], "BESAR": []}
     current_team = None
+    
+    # 1. Cari semua format Array di seluruh teks (entah itu 1 baris atau beda baris)
+    for match in re.finditer(r'\b(K|B)\b[\s:.\-]*\[?([\d\s,]+)\]?\s*=\s*(\d+)', text, re.IGNORECASE):
+        team_char = match.group(1).upper()
+        team_name = "KECIL" if team_char.startswith("K") else "BESAR"
+        total = int(match.group(3))
+        if total == 0:
+            nums = [int(x.strip()) for x in match.group(2).split(',') if x.strip().isdigit()]
+            total = sum(nums)
+        teams[team_name].append({
+            "nickname": f"TIM {team_char}", 
+            "modal": total, 
+            "result": None, 
+            "is_lf": False
+        })
+        current_team = team_name
+        
+    # Jika format array ketemu, langsung return (karena tidak ada nama pemain)
+    if teams["KECIL"] or teams["BESAR"]:
+        return teams
+        
+    # 2. Jika tidak ada format array, coba baca format nama pemain (line by line)
+    ignore_words = ["REKAP BOT", "SALDO ANDA", "CEK NAMA", "SEHARUSNYA", "Deposit berhasil", "SALDO SEHARUSNYA"]
     for raw_line in text.split('\n'):
         line = raw_line.strip()
         if not line: continue
-        
-        upper = line.upper()
-        if upper.startswith("KECIL:") or upper.startswith("K:"):
-            current_team = "KECIL"
-            rest = line.split(":", 1)[1].strip()
-            if rest: parse_player_line(rest, current_team, teams)
-            continue
-        elif upper.startswith("BESAR:") or upper.startswith("B:"):
-            current_team = "BESAR"
-            rest = line.split(":", 1)[1].strip()
-            if rest: parse_player_line(rest, current_team, teams)
+        if any(word.lower() in line.lower() for word in ignore_words): continue
+            
+        match_header = re.match(r'^(K|B|KECIL|BESAR)\b[\s:.\-]*(.*)', line, re.IGNORECASE)
+        if match_header:
+            team_char = match_header.group(1).upper()
+            current_team = "KECIL" if team_char.startswith("K") else "BESAR"
+            rest = match_header.group(2).strip()
+            if rest and not rest.startswith("-"):
+                parse_player_line(rest, current_team, teams)
             continue
             
         if current_team:
             parse_player_line(line, current_team, teams)
+            
     return teams
 
 def parse_player_line(line, team, teams):
@@ -95,7 +126,7 @@ def parse_player_line(line, team, teams):
         result_part = parts[1].strip()
         has_result = True
         if result_part:
-            try: result = int(result_part.replace(".", "").replace(",", ""))
+            try: result = int(result_part.replace(".", "").replace(",", "").split()[0])
             except: result = None
     else:
         left_part = line
@@ -111,7 +142,8 @@ def parse_player_line(line, team, teams):
     except: return
 
     nickname = " ".join(tokens[:-1]).strip()
-    if not nickname or re.search(r'\d', nickname): return
+    if not nickname: return
+    if re.fullmatch(r'[\d\s,]+', nickname): return
 
     teams[team].append({"nickname": nickname, "modal": modal, "result": result, "is_lf": is_lf})
 
@@ -170,14 +202,22 @@ def browser_keyboard():
     kb.add(*[types.InlineKeyboardButton(b, callback_data=f"rw_browser_{b}") for b in options])
     return kb
 
-def sewa_keyboard():
+def sewa_main_keyboard():
+    kb = types.InlineKeyboardMarkup(row_width=2)
+    btns = [
+        types.InlineKeyboardButton("1 Hari (1K)", callback_data="sewa_1"),
+        types.InlineKeyboardButton("3 Hari (2.5K)", callback_data="sewa_3"),
+        types.InlineKeyboardButton("7 Hari (5K)", callback_data="sewa_7"),
+        types.InlineKeyboardButton("14 Hari (8K)", callback_data="sewa_14"),
+        types.InlineKeyboardButton("30 Hari (15K)", callback_data="sewa_30"),
+        types.InlineKeyboardButton("📊 Cek Status", callback_data="sewa_cek")
+    ]
+    kb.add(*btns)
+    return kb
+
+def transfer_keyboard():
     kb = types.InlineKeyboardMarkup(row_width=1)
-    kb.add(
-        types.InlineKeyboardButton("XVIP 1 Hari (Rp 7.000)", callback_data="sewa_1"),
-        types.InlineKeyboardButton("XVIP 3 Hari (Rp 20.000)", callback_data="sewa_3"),
-        types.InlineKeyboardButton("XVIP Permanen (Rp 50.000)", callback_data="sewa_p"),
-        types.InlineKeyboardButton("📊 Cek Status Sewa", callback_data="sewa_cek")
-    )
+    kb.add(types.InlineKeyboardButton("✅ Saya Sudah Transfer", callback_data="conf_transfer"))
     return kb
 
 # ============== /rekap ==============
@@ -204,7 +244,7 @@ def cmd_rekap(message):
 
     teams = parse_duel_data(src)
     if not teams["KECIL"] and not teams["BESAR"]:
-        return bot.reply_to(message, "❌ Gagal parse data duel. Cek format:\nK:\nSIGMA 100\nB:\nFIRMA 50")
+        return bot.reply_to(message, "❌ Gagal membaca data duel. Cek formatnya:\n\nK:\nSIGMA 100\n\nB:\nFIRMA 50\n\nAtau format array:\nK: 23, 5 = 28\nB: 10, 5 = 15")
 
     fee = 0.0
     parts = message.text.split()
@@ -227,11 +267,13 @@ def render_duel_summary(teams, fee):
     for t in ("KECIL", "BESAR"):
         if teams[t]:
             lines.append(f"*{t}:*")
+            total = 0
             for p in teams[t]:
                 tag = " LF" if p["is_lf"] else ""
                 r = f" // {p['result']}" if p["result"] is not None else ""
                 lines.append(f"  {p['nickname']} {fmt_num(p['modal'])}{tag}{r}")
-            lines.append(f"  Total: {fmt_num(sum(p['modal'] for p in teams[t]))}\n")
+                total += p["modal"]
+            lines.append(f"  Total: {fmt_num(total)}\n")
     lines.append(f"💰 Fee: {fee}%")
     return "\n".join(lines)
 
@@ -429,10 +471,21 @@ def cmd_saldo_actions(message):
     msg = bot.send_message(chat_id, msg_text)
     try_pin_message(chat_id, msg.message_id)
 
-# ============== /sewa OTOMATIS & /upgrade ==============
+# ============== /sewa OTOMATIS (INVOICE) ==============
 @bot.message_handler(commands=['sewa'])
 def cmd_sewa(message):
-    bot.reply_to(message, "💎 *AKSES PREMIUM*\n\nSilakan pilih paket di bawah ini:", parse_mode="Markdown", reply_markup=sewa_keyboard())
+    text = (
+        "👑 *SEWA BOT REKAPWIN*\n\n"
+        "Untuk menggunakan bot tanpa batas, silakan sewa bot dengan mengetik /sewa\n\n"
+        "📋 *Daftar Harga:*\n"
+        "• 1 Hari : Rp 1.000\n"
+        "• 3 Hari : Rp 2.500\n"
+        "• 7 Hari : Rp 5.000\n"
+        "• 14 Hari : Rp 8.000\n"
+        "• 30 Hari : Rp 15.000\n\n"
+        "Silakan pilih durasi sewa di bawah ini:"
+    )
+    bot.reply_to(message, text, parse_mode="Markdown", reply_markup=sewa_main_keyboard())
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("sewa_"))
 def cb_sewa(call):
@@ -440,13 +493,7 @@ def cb_sewa(call):
     user_id = call.from_user.id
     cid = str(chat_id)
     
-    if call.data == "sewa_1":
-        days, harga, paket = 1, "7.000", "XVIP 1 Hari"
-    elif call.data == "sewa_3":
-        days, harga, paket = 3, "20.000", "XVIP 3 Hari"
-    elif call.data == "sewa_p":
-        days, harga, paket = 0, "50.000", "XVIP Permanen"
-    elif call.data == "sewa_cek":
+    if call.data == "sewa_cek":
         if cid in data_store["premium_groups"]:
             exp = data_store["premium_groups"][cid]
             if exp == 0:
@@ -459,36 +506,58 @@ def cb_sewa(call):
         bot.answer_callback_query(call.id)
         bot.send_message(chat_id, text, parse_mode="Markdown")
         return
-    else:
-        return
 
-    # Simpan data sementara user yang ingin bayar
+    days_str = call.data.split("_")[1]
+    if days_str not in SEWA_PRICES: return
+    
+    data = SEWA_PRICES[days_str]
+    days = int(days_str)
+    price = data["price"]
+    text_days = data["text"]
+    
+    admin_fee = int(price * 0.027)
+    total = price + admin_fee
+    
     data_store["pending_payment"][str(user_id)] = {
         "chat_id": chat_id,
         "days": days,
-        "harga": harga,
-        "paket": paket
+        "price": total,
+        "text": text_days
     }
     save_state()
 
+    deadline = datetime.now() + timedelta(minutes=5)
+    deadline_str = deadline.strftime("%H:%M")
+    
     caption = (
-        f"📷 *PEMBAYARAN TIER XVIP*\n\n"
-        f"📦 Paket: {paket}\n"
-        f"💰 Total Bayar: *Rp {harga}*\n\n"
-        f"1. Scan QRIS di atas menggunakan e-wallet/m-banking apapun.\n"
-        f"2. Pastikan nominal sesuai dengan harga paket.\n"
-        f"3. *Kirimkan foto bukti pembayaran KE CHAT INI.*\n"
+        f"🧾 *INVOICE PEMBAYARAN*\n\n"
+        f"📦 Service: Sewa Rekapwin {text_days}\n"
+        f"💰 Price: Rp {fmt_num(price)}\n"
+        f"⚙️ Biaya Admin: Rp {fmt_num(admin_fee)}\n"
+        f"💵 Total: *Rp {fmt_num(total)}*\n\n"
+        f"💳 Payment Method:\n"
+        f"Silakan scan QRIS di atas menggunakan ShopeePay / OVO / Dana / GoPay / m-Banking.\n\n"
+        f"⏳ Batas Waktu: {deadline_str} WIB\n"
+        f"❗ Status: *Menunggu konfirmasi transfer*"
     )
     
     if os.path.exists(QRIS_PHOTO_PATH):
         with open(QRIS_PHOTO_PATH, 'rb') as photo:
-            bot.send_photo(chat_id, photo, caption=caption, parse_mode="Markdown")
+            bot.send_photo(chat_id, photo, caption=caption, parse_mode="Markdown", reply_markup=transfer_keyboard())
     else:
-        bot.send_message(chat_id, f"{caption}\n(Maaf, foto QRIS belum diupload.)", parse_mode="Markdown")
+        bot.send_message(chat_id, f"{caption}\n\n(Maaf, foto QRIS belum diupload.)", parse_mode="Markdown", reply_markup=transfer_keyboard())
     
-    bot.answer_callback_query(call.id, "QRIS dikirim! Silakan lakukan pembayaran.")
+    bot.answer_callback_query(call.id, f"Invoice {text_days} dibuat!")
 
-# Handler untuk menangkap foto bukti pembayaran
+@bot.callback_query_handler(func=lambda c: c.data == "conf_transfer")
+def cb_conf_transfer(call):
+    bot.answer_callback_query(call.id, "Pembayaran belum terdeteksi!")
+    bot.send_message(call.message.chat.id, 
+        "⚠️ *Pembayaran belum terdeteksi.*\n\n"
+        "Jika Anda sudah transfer, silakan *kirim foto bukti pembayaran* ke chat ini untuk diverifikasi oleh admin.", 
+        parse_mode="Markdown"
+    )
+
 @bot.message_handler(content_types=['photo', 'document'])
 def handle_payment_proof(message):
     user_id = str(message.from_user.id)
@@ -497,21 +566,20 @@ def handle_payment_proof(message):
         data = data_store["pending_payment"][user_id]
         group_id = data["chat_id"]
         days = data["days"]
-        harga = data["harga"]
-        paket = data["paket"]
+        price = data["price"]
+        text_days = data["text"]
         username = message.from_user.username or message.from_user.first_name
 
         notif_text = (
             f"🔔 *PEMBAYARAN BARU MASUK*\n\n"
             f"👤 User: @{username}\n"
             f"🆔 ID: `{group_id}`\n"
-            f"📦 Paket: {paket}\n"
-            f"💰 Jumlah: *Rp {harga}*\n\n"
+            f"📦 Paket: Sewa {text_days}\n"
+            f"💰 Jumlah: *Rp {fmt_num(price)}*\n\n"
             f"Ketik command ini untuk mengaktifkan:\n"
             f"`/upgrade {group_id} XVIP {days}`"
         )
 
-        # Teruskan foto ke Admin
         for admin_id in ADMIN_IDS:
             try:
                 if message.photo:
@@ -523,11 +591,9 @@ def handle_payment_proof(message):
             except Exception as e:
                 print(f"Gagal kirim notif ke admin {admin_id}: {e}")
 
-        # Hapus data pending user
         del data_store["pending_payment"][user_id]
         save_state()
 
-        # Balas ke user
         bot.reply_to(message, "✅ *Bukti pembayaran telah dikirim ke admin.*\n\nMohon tunggu verifikasi maksimal 5 menit hingga premium aktif.", parse_mode="Markdown")
 
 @bot.message_handler(commands=['upgrade'])
