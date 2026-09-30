@@ -9,7 +9,7 @@ import time
 BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"  # Ganti dengan token bot Anda
 ADMIN_IDS = [123456789]  # Ganti dengan ID Telegram Anda
 MIN_MEMBER_PREMIUM = 500
-QRIS_PHOTO_PATH = "qris.jpg"  # Pastikan file qris.jpg ada di folder yang sama
+QRIS_PHOTO_PATH = "qris.png"  # Pastikan file qris.jpg ada di folder yang sama
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None)
 
