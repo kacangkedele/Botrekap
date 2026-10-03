@@ -9,10 +9,20 @@ from datetime import datetime, timedelta
 # ============== KONFIGURASI ==============
 BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"  # Ganti dengan token bot Anda
 ADMIN_IDS = [123456789]  # Ganti dengan ID Telegram Anda
-MIN_MEMBER_PREMIUM = 500
+MIN_MEMBER_PREMIUM = 10
 QRIS_PHOTO_PATH = "qris.png"  # Pastikan file qris.png ada di folder yang sama
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None)
+
+# Fungsi aman untuk membalas pesan agar tidak error 400
+def safe_reply(message, text, **kwargs):
+    try:
+        return bot.reply_to(message, text, **kwargs)
+    except:
+        try:
+            return bot.send_message(message.chat.id, text, **kwargs)
+        except Exception as e:
+            print(f"Failed to send message: {e}")
 
 SEWA_PRICES = {
     "1": {"price": 1000, "text": "1 Hari"},
@@ -52,7 +62,7 @@ def parse_duel_data(text):
     teams = {"KECIL": [], "BESAR": []}
     current_team = None
     
-    # 1. Cari semua format Array di seluruh teks (contoh: K: [23, 20, 50] = 93)
+    # 1. Cari semua format Array di seluruh teks (contoh: K: [23,20,50] = 93)
     for match in re.finditer(r'\b(K|B)\b[\s:.\-]*\[?([\d\s,]+)\]?\s*=\s*(\d+)', text, re.IGNORECASE):
         team_char = match.group(1).upper()
         team_name = "KECIL" if team_char.startswith("K") else "BESAR"
@@ -134,6 +144,31 @@ def try_pin_message(chat_id, message_id):
     try: bot.pin_chat_message(chat_id, message_id, disable_notification=True)
     except: pass
 
+def render_lw_output(lw_data, balances):
+    months = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember']
+    now = datetime.now()
+    date_str = f"{now.day} {months[now.month-1]} {now.year}"
+    time_str = now.strftime("%H.%M WIB")
+    
+    total_saldo = sum(v for v in balances.values() if v > 0)
+    win_lines, lose_lines = [], []
+    for nick, saldo in balances.items():
+        if saldo > 0:
+            win_lines.append(f"{nick} {fmt_num(saldo)}")
+        elif saldo < 0:
+            lose_lines.append(f"{nick} -{fmt_num(abs(saldo))}")
+            
+    output = f"DEV: {lw_data['device']}\nDATE : {date_str}\nTIME : {time_str}\nROL: {lw_data['browser']}\n\nLAST WIN : (@{lw_data['username']})\n"
+    
+    for i, game in enumerate(lw_data.get('games', [])):
+        output += f"GAME {i+1} : {game['winner']} {game['score']} {fmt_num(game['modal'])}\n"
+        
+    output += f"\nSALDO PEMAIN : ({fmt_num(total_saldo)})\n"
+    output += "\n".join(win_lines)
+    if lose_lines:
+        output += "\n\n" + "\n".join(lose_lines)
+    return output
+
 def update_last_win_message():
     chat_id = data_store.get("last_win_chat_id")
     msg_id = data_store.get("last_win_msg_id")
@@ -141,20 +176,7 @@ def update_last_win_message():
     
     if not chat_id or not msg_id or not lw_data: return
         
-    total_saldo = sum(v for v in data_store["balances"].values() if v > 0)
-    
-    win_lines, lose_lines = [], []
-    for nick, saldo in data_store["balances"].items():
-        if saldo > 0:
-            win_lines.append(f"{nick} {fmt_num(saldo)}")
-        elif saldo < 0:
-            lose_lines.append(f"{nick} -{fmt_num(abs(saldo))}")
-            
-    output = f"DEV: {lw_data['device']}\nROL: {lw_data['browser']}\n\nLAST WIN : (@{lw_data['username']})\nGAME 1 : {lw_data['winner'][0]} {lw_data['score']} {fmt_num(lw_data['loser_modal'])}\n\nSALDO PEMAIN : ({fmt_num(total_saldo)})\n"
-    output += "\n".join(win_lines)
-    if lose_lines:
-        output += "\n\n" + "\n".join(lose_lines)
-    
+    output = render_lw_output(lw_data, data_store["balances"])
     try:
         bot.edit_message_text(output, chat_id=chat_id, message_id=msg_id)
     except: pass
@@ -190,14 +212,17 @@ def sewa_main_keyboard():
     )
     return kb
 
-# ============== /rekapwin ==============
-@bot.message_handler(commands=['rekapwin', 'rekap', 'win'])
+# ============== /rekap (Tanpa Tombol) & /rekapwin (Dengan Tombol) ==============
+@bot.message_handler(commands=['rekapwin', 'rekap', 'win', 'winrekap'])
 def cmd_rekap(message):
     chat_id = message.chat.id
     user = message.from_user
+    parts = message.text.split()
+    if not parts: return
+    cmd = parts[0].split('@')[0][1:].lower()
 
     if message.chat.type not in ("group", "supergroup"):
-        return bot.reply_to(message, "❌ Command ini hanya untuk grup.")
+        return safe_reply(message, "❌ Command ini hanya untuk grup.")
 
     # Cek apakah user adalah Admin Grup atau Admin Bot
     is_user_admin = False
@@ -211,42 +236,45 @@ def cmd_rekap(message):
         except: pass
 
     if not is_user_admin:
-        return bot.reply_to(message, "❌ Maaf, perintah ini hanya bisa digunakan oleh Admin Grup.")
+        return safe_reply(message, "❌ Maaf, perintah ini hanya bisa digunakan oleh Admin Grup.")
 
     # Cek Premium
     if not is_premium(chat_id):
         try: member_count = bot.get_chat_member_count(chat_id)
         except: member_count = 0
         if member_count < MIN_MEMBER_PREMIUM:
-            return bot.reply_to(message, f"❌ Fitur ini membutuhkan akses premium.\nGunakan /sewa untuk mendapatkan akses premium.")
+            return safe_reply(message, f"❌ Fitur ini membutuhkan akses premium.\nGunakan /sewa untuk mendapatkan akses premium.")
 
     if not message.reply_to_message:
-        return bot.reply_to(message, "❌ Balas pesan data duel, lalu kirim /rekapwin [fee]")
+        return safe_reply(message, "❌ Balas pesan data duel, lalu kirim /rekapwin [fee]")
 
     src = message.reply_to_message.text
     if not src:
-        return bot.reply_to(message, "❌ Pesan yang dibalas bukan teks data duel.")
+        return safe_reply(message, "❌ Pesan yang dibalas bukan teks data duel.")
 
     teams = parse_duel_data(src)
     if not teams["KECIL"] and not teams["BESAR"]:
-        return bot.reply_to(message, "❌ Format K/B tidak terbaca.")
+        return safe_reply(message, "❌ Format K/B tidak lengkap.")
 
     fee = 0.0
-    parts = message.text.split()
     if len(parts) > 1:
         try: fee = float(parts[1].replace(",", "."))
         except: pass
 
-    key = f"{chat_id}:{user.id}"
-    data_store["pending_rekap"][key] = {
-        "teams": teams, "fee": fee, "winner": None, "score": None,
-        "browser": None, "device": None, "chat_id": chat_id, "user_id": user.id,
-        "username": user.username or user.first_name, "step": "winner",
-    }
-    save_state()
-
     summary = render_duel_summary(teams, fee)
-    bot.reply_to(message, f"📊 *DATA DUEL DITERIMA*\n\n{summary}\n\n👉 *Pilih tim pemenang:*", parse_mode="Markdown", reply_markup=winner_keyboard())
+    show_buttons = cmd in ['rekapwin', 'win', 'winrekap']
+    
+    if show_buttons:
+        key = f"{chat_id}:{user.id}"
+        data_store["pending_rekap"][key] = {
+            "teams": teams, "fee": fee, "winner": None, "score": None,
+            "browser": None, "device": None, "chat_id": chat_id, "user_id": user.id,
+            "username": user.username or user.first_name, "step": "winner",
+        }
+        save_state()
+        safe_reply(message, f"📊 *DATA DUEL DITERIMA*\n\n{summary}\n\n👉 *Pilih tim pemenang:*", parse_mode="Markdown", reply_markup=winner_keyboard())
+    else:
+        safe_reply(message, f"📊 *DATA DUEL DITERIMA*\n\n{summary}", parse_mode="Markdown")
 
 def render_duel_summary(teams, fee):
     k_total = sum(p["modal"] for p in teams["KECIL"])
@@ -256,30 +284,38 @@ def render_duel_summary(teams, fee):
     b_modals = [str(p["modal"]) for p in teams["BESAR"]]
     
     lines = []
-    lines.append(f"🔵 K: [{', '.join(k_modals)}] = {k_total}")
+    lines.append(f"*🔵 K: [{','.join(k_modals)}] = {k_total}*")
     lines.append("")
-    lines.append(f"🔵 B: [{', '.join(b_modals)}] = {b_total}")
+    lines.append(f"*🔵 B: [{','.join(b_modals)}] = {b_total}*")
     lines.append("")
     
     if k_total > b_total:
         diff = k_total - b_total
-        lines.append(f"🐠 B masih kekurangan {diff} untuk menyamai K.")
+        lines.append(f"*🐠 B masih kekurangan {diff} untuk menyamai K.*")
         lines.append("")
-        lines.append(f"💰 Saldo Anda seharusnya: {k_total + b_total} K")
+        lines.append(f"*💰 Saldo Anda seharusnya: {k_total + b_total} K*")
         lines.append("")
-        lines.append(f"B -{diff} ALL // ECER")
+        lines.append(f"*B -{diff} ALL // ECER*")
     elif b_total > k_total:
         diff = b_total - k_total
-        lines.append(f"🐠 K masih kekurangan {diff} untuk menyamai B.")
+        lines.append(f"*🐠 K masih kekurangan {diff} untuk menyamai B.*")
         lines.append("")
-        lines.append(f"💰 Saldo Anda seharusnya: {k_total + b_total} B")
+        lines.append(f"*💰 Saldo Anda seharusnya: {k_total + b_total} B*")
         lines.append("")
-        lines.append(f"K -{diff} ALL // ECER")
+        lines.append(f"*K -{diff} ALL // ECER*")
     else:
-        lines.append(f"💰 Saldo seharusnya: {k_total + b_total}")
+        lines.append(f"*💰 Saldo Anda seharusnya: {k_total + b_total} K*")
+        lines.append("")
+        lines.append("*CEK NAMA + NOMINAL MASING²*")
+        lines.append("*KALAU UDAH MAEN BARU*")
+        lines.append("*PROTES BRRTI HANGUS*")
+        lines.append("")
+        lines.append("*(JEMPOL = AMAN)*")
         
-    lines.append("")
-    lines.append(f"💸 Fee: {fee}%")
+    if fee > 0:
+        lines.append("")
+        lines.append(f"*💸 Fee: {fee}%*")
+        
     return "\n".join(lines)
 
 # ============== CALLBACK REKAP ==============
@@ -291,7 +327,7 @@ def cb_winner(call):
     pr["winner"] = call.data.split("rw_win_")[1]
     pr["step"] = "score"
     save_state()
-    bot.edit_message_text(f"✅ Pemenang: *{pr['winner']}*\n\nPilih skor:", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=score_keyboard())
+    bot.edit_message_text(f"Tim *{pr['winner'][0]}* menang dengan skor:\nPilih skor:", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=score_keyboard())
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("rw_score_"))
 def cb_score(call):
@@ -311,7 +347,7 @@ def cb_score(call):
     else:
         pr["step"] = "browser"
         save_state()
-        bot.edit_message_text(f"✅ Skor: {pr['score']}\n\n🌐 Pilih browser yang digunakan:", chat_id=chat_id, message_id=call.message.message_id, reply_markup=browser_keyboard())
+        bot.edit_message_text("Pilih browser yang digunakan:", chat_id=chat_id, message_id=call.message.message_id, reply_markup=browser_keyboard())
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("rw_browser_"))
 def cb_browser(call):
@@ -349,7 +385,7 @@ def cb_back_browser(call):
     if not pr: return
     pr["step"] = "score"
     save_state()
-    bot.edit_message_text(f"✅ Pemenang: *{pr['winner']}*\n\nPilih skor:", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=score_keyboard())
+    bot.edit_message_text(f"Tim *{pr['winner'][0]}* menang dengan skor:\nPilih skor:", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode="Markdown", reply_markup=score_keyboard())
 
 @bot.message_handler(func=lambda m: m.text and not m.text.startswith('/'), content_types=['text'])
 def catch_device_input(message):
@@ -363,11 +399,11 @@ def catch_device_input(message):
         data_store["device"] = device_name
         pr["step"] = "done"
         save_state()
-        bot.reply_to(message, f"📱 Device: {device_name}\n\n⏳ Memproses rekap...")
+        safe_reply(message, f"📱 Device: {device_name}\n\n⏳ Memproses rekap...")
         finalize_rekap(pr, chat_id)
         return
 
-# ============== HITUNG OTOMATIS (BACA // HASIL) ==============
+# ============== HITUNG OTOMATIS (BACA // HASIL) & MULTI-GAME LW ==============
 def finalize_rekap(pr, chat_id):
     teams = pr["teams"]
     winner = pr["winner"]
@@ -378,7 +414,6 @@ def finalize_rekap(pr, chat_id):
     
     winner_modal = sum(p["modal"] for p in teams[winner])
     loser_modal = sum(p["modal"] for p in teams[loser])
-    total_modal = winner_modal + loser_modal
 
     multiplier = 2.0 if score == "2-0" else 1.0
     prize_pool = int(loser_modal * multiplier)
@@ -414,42 +449,48 @@ def finalize_rekap(pr, chat_id):
     for nick in list(data_store["balances"].keys()):
         data_store["balances"][nick] = bulatkan_ke_kelipatan(data_store["balances"][nick])
 
-    total_saldo = sum(v for v in data_store["balances"].values() if v > 0)
     save_state()
 
-    # Pisahkan yang plus dan minus untuk ditampilkan
-    win_lines, lose_lines = [], []
-    for nick, saldo in data_store["balances"].items():
-        if saldo > 0:
-            win_lines.append(f"{nick} {fmt_num(saldo)}")
-        elif saldo < 0:
-            lose_lines.append(f"{nick} -{fmt_num(abs(saldo))}")
+    # Cek apakah LW sudah ada di grup ini. Jika ada, tambahkan Game baru. Jika tidak, buat LW baru.
+    if data_store.get("last_win_chat_id") != chat_id or not data_store.get("last_win_data"):
+        data_store["last_win_chat_id"] = chat_id
+        data_store["last_win_data"] = {
+            "device": pr['device'],
+            "browser": pr['browser'],
+            "username": pr['username'],
+            "games": []
+        }
+    else:
+        # Update data device/browser/user terbaru
+        data_store["last_win_data"]["device"] = pr['device']
+        data_store["last_win_data"]["browser"] = pr['browser']
+        data_store["last_win_data"]["username"] = pr['username']
+        
+    # Tambahkan game saat ini ke daftar games di LW
+    data_store["last_win_data"]["games"].append({
+        "winner": winner[0],
+        "score": score,
+        "modal": loser_modal
+    })
+    
+    save_state()
 
-    # Kirim tulisan Rekapwin selesai
+    # Render output LW
+    output = render_lw_output(data_store["last_win_data"], data_store["balances"])
+
+    # Unpin pesan LW lama jika ada
+    old_msg_id = data_store.get("last_win_msg_id")
+    if old_msg_id:
+        try: bot.unpin_chat_message(chat_id, old_msg_id)
+        except: pass
+
+    # Kirim pesan LW baru dan pin pesan tersebut
     bot.send_message(chat_id, "✅ *Rekapwin selesai.*", parse_mode="Markdown")
-    
-    # Format output rekap
-    output = f"DEV: {pr['device']}\nROL: {pr['browser']}\n\nLAST WIN : (@{pr['username']})\nGAME 1 : {winner[0]} {score} {fmt_num(loser_modal)}\n\nSALDO PEMAIN : ({fmt_num(total_saldo)})\n"
-    output += "\n".join(win_lines)
-    if lose_lines:
-        output += "\n\n" + "\n".join(lose_lines)
-    
-    # Kirim dan pin pesan
     sent = bot.send_message(chat_id, output)
     try_pin_message(chat_id, sent.message_id)
-    
-    # Simpan data last win untuk diedit nanti
-    data_store["last_win_chat_id"] = chat_id
     data_store["last_win_msg_id"] = sent.message_id
-    data_store["last_win_data"] = {
-        "device": pr['device'],
-        "browser": pr['browser'],
-        "username": pr['username'],
-        "winner": winner,
-        "score": score,
-        "loser_modal": loser_modal
-    }
-    
+    save_state()
+
     # Hapus sesi rekap yang pending
     if f"{chat_id}:{pr['user_id']}" in data_store["pending_rekap"]:
         del data_store["pending_rekap"][f"{chat_id}:{pr['user_id']}"]
@@ -462,7 +503,6 @@ def cmd_saldo_actions(message):
         parts = message.text.split()
         if not parts: return
         
-        # Perbaikan: Hilangkan @NamaBot jika user mengetik /lunas@Bot
         cmd = parts[0].split('@')[0][1:].lower()
         user = message.from_user.username or message.from_user.first_name
         
@@ -470,11 +510,15 @@ def cmd_saldo_actions(message):
             data_store["balances"] = {}
             data_store["last_win_msg_id"] = None
             data_store["last_win_chat_id"] = None
+            data_store["last_win_data"] = None
+            # RESET DEVICE DAN BROWSER JUGA AGAR DITANYAKAN ULANG SAAT REKAPWIN
+            data_store["device"] = None
+            data_store["browser"] = None
             save_state()
-            return bot.reply_to(message, "✅ History direset. Game baru dimulai.")
+            return safe_reply(message, "✅ History direset. Dev & ROL akan diperbarui saat rekapwin berikutnya.")
             
         if cmd == 'bulatkan':
-            if not data_store["balances"]: return bot.reply_to(message, "❌ Tidak ada saldo.")
+            if not data_store["balances"]: return safe_reply(message, "❌ Tidak ada saldo.")
             changes = []
             for n, val in data_store["balances"].items():
                 new = bulatkan_ke_kelipatan(val, 100)
@@ -487,24 +531,21 @@ def cmd_saldo_actions(message):
             update_last_win_message()
             return
 
-        # Pastikan cmd dikenali sebelum lanjut
         if cmd not in ['lunas', 'wd', 'tambah', 'kurangi', 'depo']: return
 
-        # Penanganan error jika argumen kurang
         if cmd in ['lunas', 'wd'] and len(parts) < 2: 
-            return bot.reply_to(message, f"❌ Format: /{cmd} [username]")
+            return safe_reply(message, f"❌ Format: /{cmd} [username]")
         if cmd in ['tambah', 'kurangi', 'depo'] and len(parts) < 3: 
-            return bot.reply_to(message, f"❌ Format: /{cmd} [username] [jumlah]")
+            return safe_reply(message, f"❌ Format: /{cmd} [username] [jumlah]")
 
-        # Aman mengambil nick dan jumlah
         nick = parts[1].strip().lower()
         amt = 0
         if cmd in ['tambah', 'kurangi', 'depo']:
             try: amt = int(parts[2].replace(".", ""))
-            except: return bot.reply_to(message, "❌ Jumlah tidak valid.")
+            except: return safe_reply(message, "❌ Jumlah tidak valid.")
         
         if cmd == 'lunas':
-            if nick not in data_store["balances"]: return bot.reply_to(message, "❌ Pemain tidak ditemukan.")
+            if nick not in data_store["balances"]: return safe_reply(message, "❌ Pemain tidak ditemukan.")
             old = data_store["balances"][nick]
             data_store["balances"][nick] = 0
             msg_text = f"✅ Hutang dilunasi.\n👤 {nick}: {fmt_num(old)} → 0\n📟 Oleh: @{user}"
@@ -513,7 +554,7 @@ def cmd_saldo_actions(message):
             old = data_store["balances"].get(nick, 0)
             data_store["balances"][nick] = old + amt
             if cmd == 'depo':
-                msg_text = f"Saldo {nick.upper()} berhasil didepo {fmt_num(amt)}."
+                msg_text = f"✅ Saldo {nick.upper()} berhasil didepo {fmt_num(amt)}."
             else:
                 msg_text = f"➕ Saldo ditambah.\n👤 {nick}: {fmt_num(old)} → {fmt_num(data_store['balances'][nick])}\n📟 Oleh: @{user}"
             
@@ -525,7 +566,7 @@ def cmd_saldo_actions(message):
         elif cmd == 'wd':
             saldo = data_store["balances"].get(nick, 0)
             msg_text = f"💳 Saldo {nick}: {fmt_num(saldo)}" if saldo > 0 else (f"⚠️ Hutang {nick}: {fmt_num(abs(saldo))}" if saldo < 0 else f"❌ {nick} tidak punya saldo.")
-            return bot.reply_to(message, msg_text)
+            return safe_reply(message, msg_text)
 
         save_state()
         bot.send_message(message.chat.id, msg_text)
@@ -543,7 +584,7 @@ def cmd_sewa(message):
         "• 1 Hari : Rp 1.000\n• 3 Hari : Rp 2.500\n• 7 Hari : Rp 5.000\n• 14 Hari : Rp 8.000\n• 30 Hari : Rp 15.000\n\n"
         "Silakan pilih durasi sewa di bawah ini:"
     )
-    bot.reply_to(message, text, parse_mode="Markdown", reply_markup=sewa_main_keyboard())
+    safe_reply(message, text, parse_mode="Markdown", reply_markup=sewa_main_keyboard())
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith("sewa_"))
 def cb_sewa(call):
@@ -621,7 +662,7 @@ def handle_payment_proof(message):
 
             del data_store["pending_payment"][user_id]
             save_state()
-            bot.reply_to(message, "✅ *Bukti pembayaran telah dikirim ke admin.*\n\nMohon tunggu verifikasi.", parse_mode="Markdown")
+            safe_reply(message, "✅ *Bukti pembayaran telah dikirim ke admin.*\n\nMohon tunggu verifikasi.", parse_mode="Markdown")
     except Exception as e:
         print(f"Error handle photo: {e}")
 
@@ -629,12 +670,12 @@ def handle_payment_proof(message):
 def cmd_upgrade(message):
     if message.from_user.id not in ADMIN_IDS: return
     parts = message.text.split()
-    if len(parts) < 4: return bot.reply_to(message, "❌ Format: /upgrade [group_id] XVIP [hari]")
+    if len(parts) < 4: return safe_reply(message, "❌ Format: /upgrade [group_id] XVIP [hari]")
     
     try:
         cid = parts[1]
         days = int(parts[3])
-    except: return bot.reply_to(message, "❌ Format tidak valid.")
+    except: return safe_reply(message, "❌ Format tidak valid.")
     
     if days == 0:
         data_store["premium_groups"][cid] = 0
@@ -648,18 +689,21 @@ def cmd_upgrade(message):
     save_state()
     try: bot.send_message(int(cid), f"🎉 *Premium Aktif!* Grup ini telah diaktifkan.", parse_mode="Markdown")
     except: pass
-    bot.reply_to(message, text, parse_mode="Markdown")
+    safe_reply(message, text, parse_mode="Markdown")
 
-@bot.message_handler(commands=['help', 'start'])
+@bot.message_handler(commands=['help', 'start', 'panduan'])
 def cmd_help(message):
-    bot.reply_to(message,
-        "📖 *PANDUAN BOT REKAP WIN*\n\n"
-        "1️⃣ Format Input Data Duel:\n"
+    safe_reply(message,
+        "📖 *PANDUAN BOT REKAP WIN By Angga Official*\n\n"
+        "1️⃣ Perintah Utama:\n"
+        "• /rekap - Cek Data Duel (Tanpa Tombol)\n"
+        "• /winrekap - Mendapatkan Data Rekap (Dengan Tombol)\n"
+        "• /rekapwin [fee] - Rekap duel dengan potongan fee\n"
+        "• /win [fee] - Sama seperti /rekapwin\n\n"
+        "2️⃣ Format Input Data Duel:\n"
         "```\nK: HENDRA 23 P\nNIP 20\n\nB: ROB 50\n```\nAtau format Array:\n```\nK: [18,200] = 218\n```\n\n"
-        "2️⃣ Perintah Utama:\n"
-        "• Balas data duel → /rekapwin [fee]\n\n"
         "3️⃣ Fitur Saldo:\n"
-        "• /resetlw - Reset game\n"
+        "• /resetlw - Reset game (Mereset DEV & ROL juga)\n"
         "• /lunas [user] - Lunasi hutang\n"
         "• /tambah [user] [jumlah]\n"
         "• /kurangi [user] [jumlah]\n"
@@ -673,5 +717,6 @@ def cmd_help(message):
         parse_mode="Markdown")
 
 if __name__ == "__main__":
-    print("🤖 Bot berjalan...")
-    bot.infinity_polling()
+    print("🤖 Bot REKAP By Angga Official berjalan...")
+    # skip_pending=True agar bot tidak memproses pesan lama saat baru dinyalakan
+    bot.infinity_polling(skip_pending=True)
