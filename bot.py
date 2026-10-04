@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 # ============== KONFIGURASI ==============
 BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"  # Ganti dengan token bot Anda
 ADMIN_IDS = [123456789]  # Ganti dengan ID Telegram Anda
-MIN_MEMBER_PREMIUM = 500
+MIN_MEMBER_PREMIUM = 5
 QRIS_PHOTO_PATH = "qris.png"  # Pastikan file qris.png ada di folder yang sama
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None)
@@ -20,7 +20,7 @@ bot.set_my_commands([
     telebot.types.BotCommand("rekap", "Rekap List (Tanpa Tombol)"),
     telebot.types.BotCommand("win", "Rekap Win Dengan Parameter"),
     telebot.types.BotCommand("winrekap", "Mendapatkan Data Rekap"),
-    telebot.types.BotCommand("geser", "Geser / Reset Data LW"),
+    telebot.types.BotCommand("geser", "Pindahkan Saldo Pemain"),
     telebot.types.BotCommand("resetlw", "Reset History Game"),
     telebot.types.BotCommand("lunas", "Lunasi Hutang Pemain"),
     telebot.types.BotCommand("tambah", "Tambah Saldo Pemain"),
@@ -28,6 +28,7 @@ bot.set_my_commands([
     telebot.types.BotCommand("depo", "Deposit Saldo Pemain"),
     telebot.types.BotCommand("wd", "Cek Saldo Pemain"),
     telebot.types.BotCommand("bulatkan", "Bulatkan Saldo ke 100"),
+    telebot.types.BotCommand("id", "Cek ID Grup"),
     telebot.types.BotCommand("sewa", "Beli Akses Premium Bot"),
     telebot.types.BotCommand("upgrade", "Aktivasi Premium Grup (Admin)"),
 ])
@@ -273,7 +274,6 @@ def try_pin_message(chat_id, message_id):
     except: pass
 
 def get_balance_nick(nickname):
-    # Fungsi ini memastikan nama pemain yang sudah ada di saldo dikenali meskipun beda huruf besar/kecil
     for bal_nick in data_store["balances"].keys():
         if bal_nick.lower() == nickname.lower():
             return bal_nick
@@ -441,7 +441,7 @@ def render_duel_summary(teams, fee, auto_fee=False):
         diff = b_total - k_total
         lines.append(f"*🐠 K masih kekurangan {diff} untuk menyamai B.*")
         lines.append("")
-        lines.append(f"*💰 Saldo Anda seharusnya: {k_total + b_total} B*")
+        lines.append(f"*💰 Saldo Anda seharusnya: {k_total + b_total} K*")
         lines.append("")
         lines.append(f"*K -{diff} ALL // ECER*")
     else:
@@ -547,7 +547,7 @@ def catch_device_input(message):
         finalize_rekap(pr, chat_id)
         return
 
-# ============== HITUNG OTOMATIS (HasilProfit = Hasil - Fee) ==============
+# ============== HITUNG OTOMATIS (Fee Disembunyikan & Dikirim ke PM Admin) ==============
 def finalize_rekap(pr, chat_id):
     teams = pr["teams"]
     winner = pr["winner"]
@@ -561,32 +561,35 @@ def finalize_rekap(pr, chat_id):
     loser_modal = sum(p["modal"] for p in teams[loser])
     
     multiplier = 1.0
+    fee_logs = []
 
     for team_name in [winner, loser]:
         for p in teams[team_name]:
-            # Cari nama pemain yang sudah ada di balances (Case-Insensitive)
             nick_target = get_balance_nick(p["nickname"])
             current = data_store["balances"].get(nick_target, 0)
+            fee_dipotong = 0
             
             if p["result"] is not None:
                 hasil = p["result"]
                 
                 if hasil > 0:
                     if auto_fee:
-                        hasil -= get_auto_fee(hasil)
+                        fee_dipotong = get_auto_fee(hasil)
+                        hasil -= fee_dipotong
                     elif fee_pct > 0:
+                        fee_dipotong = int(hasil * (fee_pct/100))
                         hasil = int(hasil * (1 - fee_pct/100))
                         
-                net = hasil - p["modal"]
+                # Saldo langsung diisi dengan Hasil Bersih (Hasil - Fee)
+                net = hasil
+                
+                # Catat untuk laporan PM Admin
+                if fee_dipotong > 0:
+                    fee_logs.append(f"👤 {nick_target}\n   Hasil: {fmt_num(p['result'])} - Fee: {fmt_num(fee_dipotong)} = {fmt_num(hasil)}")
             else:
                 if team_name == winner:
                     share = int(loser_modal * multiplier * (p["modal"] / winner_modal)) if winner_modal > 0 else 0
                     net = share
-                    if net > 0:
-                        if auto_fee:
-                            net -= get_auto_fee(net)
-                        elif fee_pct > 0:
-                            net = int(net * (1 - fee_pct/100))
                 else: 
                     penalty = int(p["modal"] * multiplier)
                     net = -penalty
@@ -594,6 +597,13 @@ def finalize_rekap(pr, chat_id):
             data_store["balances"][nick_target] = current + net
 
     save_state()
+
+    # Kirim Database Fee ke Chat Pribadi Admin (PM)
+    if fee_logs:
+        log_text = f"📊 *DATABASE FEE OTOMATIS*\n\nGame: {winner[0]} {score}\n\n" + "\n".join(fee_logs)
+        for admin_id in ADMIN_IDS:
+            try: bot.send_message(admin_id, log_text, parse_mode="Markdown")
+            except: pass
 
     if data_store.get("last_win_chat_id") != chat_id or not data_store.get("last_win_data"):
         data_store["last_win_chat_id"] = chat_id
@@ -628,7 +638,13 @@ def finalize_rekap(pr, chat_id):
         del data_store["pending_rekap"][f"{chat_id}:{pr['user_id']}"]
     save_state()
 
-# ============== FITUR SALDO, GESER, & AUTO UPDATE LW (KHUSUS ADMIN) ==============
+# ============== FITUR /id (Cek ID Grup) ==============
+@bot.message_handler(commands=['id'])
+def cmd_id(message):
+    chat_id = message.chat.id
+    safe_reply(message, f"🆔 ID Grup ini adalah: `{chat_id}`", parse_mode="Markdown")
+
+# ============== FITUR SALDO, GESER (TRANSFER), & AUTO UPDATE LW (KHUSUS ADMIN) ==============
 @bot.message_handler(commands=['resetlw', 'geser', 'lunas', 'tambah', 'kurangi', 'depo', 'wd', 'bulatkan'])
 def cmd_saldo_actions(message):
     try:
@@ -654,15 +670,36 @@ def cmd_saldo_actions(message):
         if cmd in restricted_cmds and not is_user_admin:
             return safe_reply(message, "⚠️Hanya Admin Group yang bisa menggunakan Perintah ini🚫")
             
+        # FITUR /geser (Transfer Saldo)
         if cmd == 'geser':
-            if data_store.get("last_win_msg_id"):
-                data_store["last_win_msg_id"] = None
-                data_store["last_win_chat_id"] = None
-                data_store["last_win_data"] = None
-                save_state()
-                return safe_reply(message, "✅ Data LW berhasil direset. Bot siap membuat LW baru.")
-            else:
-                return safe_reply(message, "Belum ada LAST WIN aktif yang sedang disematkan.")
+            if len(parts) < 4:
+                return safe_reply(message, "❌ Format: /geser [dari_user] [jumlah] [ke_user]")
+            
+            from_nick_input = parts[1].strip()
+            try:
+                amt = int(parts[2].replace(".", ""))
+            except:
+                return safe_reply(message, "❌ Jumlah tidak valid.")
+            to_nick_input = parts[3].strip()
+            
+            from_nick = get_balance_nick(from_nick_input)
+            to_nick = get_balance_nick(to_nick_input)
+            
+            if from_nick not in data_store["balances"]:
+                return safe_reply(message, f"❌ Pemain {from_nick_input} tidak ditemukan.")
+                
+            if data_store["balances"][from_nick] < amt:
+                return safe_reply(message, f"❌ Saldo {from_nick} tidak cukup. Saldo saat ini: {fmt_num(data_store['balances'][from_nick])}")
+                
+            # Lakukan Transfer
+            data_store["balances"][from_nick] -= amt
+            if to_nick not in data_store["balances"]:
+                data_store["balances"][to_nick] = 0
+            data_store["balances"][to_nick] += amt
+            
+            save_state()
+            update_last_win_message()
+            return safe_reply(message, f"✅ Berhasil memindahkan saldo {fmt_num(amt)} dari {from_nick} ke {to_nick}.")
             
         if cmd == 'resetlw':
             data_store["balances"] = {}
@@ -865,7 +902,7 @@ def cmd_help(message):
         "• /winrekap - Mendapatkan Data Rekap\n\n"
         "2️⃣ Fitur Saldo & LW:\n"
         "• /resetlw - Reset History & Saldo Game (Mereset DEV & ROL juga)\n"
-        "• /geser - Mereset data LW agar bot membuat LW baru (Unpin manual)\n"
+        "• /geser [dari] [jumlah] [ke] - Pindahkan saldo antar pemain\n"
         "• /lunas [user] - Lunasi hutang pemain\n"
         "• /tambah [user] [jumlah] - Tambah saldo pemain\n"
         "• /kurangi [user] [jumlah] - Kurangi saldo pemain\n"
@@ -873,6 +910,7 @@ def cmd_help(message):
         "• /wd [user] - Cek saldo pemain\n"
         "• /bulatkan - Bulatkan semua saldo ke kelipatan 100\n\n"
         "3️⃣ Fitur Premium:\n"
+        "• /id - Cek ID Grup (Untuk aktivasi premium)\n"
         "• /sewa - Beli akses premium (QRIS)\n"
         "• /upgrade [id_grup] XVIP [hari] - Aktivasi premium (Khusus Admin Bot)\n\n"
         "❗ *Bot harus menjadi Admin Grup untuk bisa menyematkan (pin) pesan LW.*\n"
