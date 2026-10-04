@@ -14,7 +14,7 @@ QRIS_PHOTO_PATH = "qris.png"  # Pastikan file qris.png ada di folder yang sama
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None)
 
-# Set Menu Bawaan Telegram (Agar muncul di tombol menu seperti screenshot)
+# Set Menu Bawaan Telegram
 bot.set_my_commands([
     telebot.types.BotCommand("start", "Memulai Bot & Panduan"),
     telebot.types.BotCommand("rekap", "Rekap List (Tanpa Tombol)"),
@@ -42,7 +42,7 @@ def safe_reply(message, text, **kwargs):
         except Exception as e:
             print(f"Failed to send message: {e}")
 
-# Fungsi Auto Fee berdasarkan daftar_fee.txt (Diperbarui & Lengkap)
+# Fungsi Auto Fee berdasarkan daftar_fee.txt
 def get_auto_fee(amount):
     if amount <= 0: return 0
     if 1 <= amount <= 9: return 1
@@ -107,7 +107,6 @@ def get_auto_fee(amount):
     if 3001 <= amount <= 4000: return 440
     if 4001 <= amount <= 5000: return 500
     
-    # Untuk amount > 5000, pola fee mengikuti kelipatan 1000 (misal 5001-6000 = 600, 6001-7000 = 700)
     if amount > 200000: return 20000
     i = amount // 1000
     if amount % 1000 == 0:
@@ -147,7 +146,7 @@ def save_state():
 
 load_state()
 
-# ============== PARSER TANGGUH ==============
+# ============== PARSER TANGGUH & ANTI DUPLIKAT ==============
 def parse_duel_data(text):
     teams = {"KECIL": [], "BESAR": []}
     current_team = None
@@ -180,6 +179,28 @@ def parse_duel_data(text):
         if current_team:
             parse_player_line(line, current_team, teams)
             
+    # GABUNGKAN NAMA PEMAIN YANG SAMA (Case-Insensitive)
+    for team_name in ["KECIL", "BESAR"]:
+        merged = {}
+        for p in teams[team_name]:
+            nick_lower = p["nickname"].lower()
+            if nick_lower in merged:
+                merged[nick_lower]["modal"] += p["modal"]
+                if p["result"] is not None:
+                    if merged[nick_lower]["result"] is None: merged[nick_lower]["result"] = 0
+                    merged[nick_lower]["result"] += p["result"]
+                if p["is_lf"]: merged[nick_lower]["is_lf"] = True
+            else:
+                p["lower"] = nick_lower
+                merged[nick_lower] = p
+        
+        teams[team_name] = [{
+            "nickname": p["nickname"],
+            "modal": p["modal"],
+            "result": p["result"],
+            "is_lf": p["is_lf"]
+        } for p in merged.values()]
+        
     return teams
 
 def parse_player_line(line, team, teams):
@@ -250,6 +271,13 @@ def bulatkan_ke_kelipatan(n, kelipatan=100):
 def try_pin_message(chat_id, message_id):
     try: bot.pin_chat_message(chat_id, message_id, disable_notification=True)
     except: pass
+
+def get_balance_nick(nickname):
+    # Fungsi ini memastikan nama pemain yang sudah ada di saldo dikenali meskipun beda huruf besar/kecil
+    for bal_nick in data_store["balances"].keys():
+        if bal_nick.lower() == nickname.lower():
+            return bal_nick
+    return nickname
 
 def render_lw_output(lw_data, balances):
     months = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember']
@@ -536,7 +564,9 @@ def finalize_rekap(pr, chat_id):
 
     for team_name in [winner, loser]:
         for p in teams[team_name]:
-            current = data_store["balances"].get(p["nickname"], 0)
+            # Cari nama pemain yang sudah ada di balances (Case-Insensitive)
+            nick_target = get_balance_nick(p["nickname"])
+            current = data_store["balances"].get(nick_target, 0)
             
             if p["result"] is not None:
                 hasil = p["result"]
@@ -561,7 +591,7 @@ def finalize_rekap(pr, chat_id):
                     penalty = int(p["modal"] * multiplier)
                     net = -penalty
                     
-            data_store["balances"][p["nickname"]] = current + net
+            data_store["balances"][nick_target] = current + net
 
     save_state()
 
@@ -666,11 +696,7 @@ def cmd_saldo_actions(message):
             return safe_reply(message, f"❌ Format: /{cmd} [username] [jumlah]")
 
         nick_input = parts[1].strip()
-        nick_target = None
-        for bal_nick in data_store["balances"].keys():
-            if bal_nick.lower() == nick_input.lower():
-                nick_target = bal_nick
-                break
+        nick_target = get_balance_nick(nick_input)
         
         amt = 0
         if cmd in ['tambah', 'kurangi', 'depo']:
@@ -678,13 +704,13 @@ def cmd_saldo_actions(message):
             except: return safe_reply(message, "❌ Jumlah tidak valid.")
         
         if cmd == 'lunas':
-            if not nick_target: return safe_reply(message, "❌ Pemain tidak ditemukan.")
+            if nick_target not in data_store["balances"]: return safe_reply(message, "❌ Pemain tidak ditemukan.")
             old = data_store["balances"][nick_target]
             data_store["balances"][nick_target] = 0
             msg_text = f"✅ Hutang dilunasi.\n👤 {nick_target}: {fmt_num(old)} → 0\n📟 Oleh: @{user.username or user.first_name}"
             
         elif cmd in ['tambah', 'depo']:
-            if not nick_target:
+            if nick_target not in data_store["balances"]:
                 nick_target = nick_input 
             old = data_store["balances"].get(nick_target, 0)
             data_store["balances"][nick_target] = old + amt
@@ -694,13 +720,13 @@ def cmd_saldo_actions(message):
                 msg_text = f"➕ Saldo ditambah.\n👤 {nick_target}: {fmt_num(old)} → {fmt_num(data_store['balances'][nick_target])}\n📟 Oleh: @{user.username or user.first_name}"
             
         elif cmd == 'kurangi':
-            if not nick_target: return safe_reply(message, "❌ Pemain tidak ditemukan.")
+            if nick_target not in data_store["balances"]: return safe_reply(message, "❌ Pemain tidak ditemukan.")
             old = data_store["balances"][nick_target]
             data_store["balances"][nick_target] = old - amt
             msg_text = f"➖ Saldo dikurangi.\n👤 {nick_target}: {fmt_num(old)} → {fmt_num(data_store['balances'][nick_target])}\n📟 Oleh: @{user.username or user.first_name}"
             
         elif cmd == 'wd':
-            if not nick_target: return safe_reply(message, "❌ Pemain tidak ditemukan.")
+            if nick_target not in data_store["balances"]: return safe_reply(message, "❌ Pemain tidak ditemukan.")
             saldo = data_store["balances"].get(nick_target, 0)
             msg_text = f"💳 Saldo {nick_target}: {fmt_num(saldo)}" if saldo > 0 else (f"⚠️ Hutang {nick_target}: {fmt_num(abs(saldo))}" if saldo < 0 else f"❌ {nick_target} tidak punya saldo.")
             return safe_reply(message, msg_text)
