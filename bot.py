@@ -9,10 +9,28 @@ from datetime import datetime, timedelta
 # ============== KONFIGURASI ==============
 BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"  # Ganti dengan token bot Anda
 ADMIN_IDS = [123456789]  # Ganti dengan ID Telegram Anda
-MIN_MEMBER_PREMIUM = 10
+MIN_MEMBER_PREMIUM = 500
 QRIS_PHOTO_PATH = "qris.png"  # Pastikan file qris.png ada di folder yang sama
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None)
+
+# Set Menu Bawaan Telegram (Agar muncul di tombol menu seperti screenshot)
+bot.set_my_commands([
+    telebot.types.BotCommand("start", "Memulai Bot & Panduan"),
+    telebot.types.BotCommand("rekap", "Rekap List (Tanpa Tombol)"),
+    telebot.types.BotCommand("win", "Rekap Win Dengan Parameter"),
+    telebot.types.BotCommand("winrekap", "Mendapatkan Data Rekap"),
+    telebot.types.BotCommand("geser", "Geser / Reset Data LW"),
+    telebot.types.BotCommand("resetlw", "Reset History Game"),
+    telebot.types.BotCommand("lunas", "Lunasi Hutang Pemain"),
+    telebot.types.BotCommand("tambah", "Tambah Saldo Pemain"),
+    telebot.types.BotCommand("kurangi", "Kurangi Saldo Pemain"),
+    telebot.types.BotCommand("depo", "Deposit Saldo Pemain"),
+    telebot.types.BotCommand("wd", "Cek Saldo Pemain"),
+    telebot.types.BotCommand("bulatkan", "Bulatkan Saldo ke 100"),
+    telebot.types.BotCommand("sewa", "Beli Akses Premium Bot"),
+    telebot.types.BotCommand("upgrade", "Aktivasi Premium Grup (Admin)"),
+])
 
 # Fungsi aman untuk membalas pesan agar tidak error 400
 def safe_reply(message, text, **kwargs):
@@ -23,6 +41,78 @@ def safe_reply(message, text, **kwargs):
             return bot.send_message(message.chat.id, text, **kwargs)
         except Exception as e:
             print(f"Failed to send message: {e}")
+
+# Fungsi Auto Fee berdasarkan daftar_fee.txt (Diperbarui & Lengkap)
+def get_auto_fee(amount):
+    if amount <= 0: return 0
+    if 1 <= amount <= 9: return 1
+    if 10 <= amount <= 18: return 2
+    if 19 <= amount <= 27: return 3
+    if 28 <= amount <= 36: return 4
+    if 37 <= amount <= 45: return 5
+    if 46 <= amount <= 55: return 6
+    if 56 <= amount <= 64: return 7
+    if 65 <= amount <= 73: return 8
+    if 74 <= amount <= 82: return 9
+    if 83 <= amount <= 90: return 10
+    if 91 <= amount <= 99: return 11
+    if 100 <= amount <= 108: return 12
+    if 109 <= amount <= 117: return 13
+    if 118 <= amount <= 126: return 14
+    if 127 <= amount <= 135: return 15
+    if 136 <= amount <= 152: return 16
+    if 153 <= amount <= 161: return 17
+    if 162 <= amount <= 170: return 18
+    if 171 <= amount <= 180: return 19
+    if 181 <= amount <= 189: return 20
+    if 190 <= amount <= 198: return 21
+    if 199 <= amount <= 207: return 22
+    if 208 <= amount <= 216: return 23
+    if 217 <= amount <= 225: return 24
+    if 226 <= amount <= 234: return 25
+    if 235 <= amount <= 243: return 26
+    if 244 <= amount <= 252: return 27
+    if 253 <= amount <= 261: return 28
+    if 262 <= amount <= 270: return 30
+    if 271 <= amount <= 279: return 31
+    if 280 <= amount <= 288: return 32
+    if 289 <= amount <= 298: return 33
+    if 299 <= amount <= 306: return 34
+    if 307 <= amount <= 315: return 35
+    if 316 <= amount <= 324: return 36
+    if 325 <= amount <= 333: return 37
+    if 334 <= amount <= 342: return 38
+    if 343 <= amount <= 351: return 39
+    if 352 <= amount <= 360: return 40
+    if 361 <= amount <= 369: return 41
+    if 370 <= amount <= 378: return 42
+    if 379 <= amount <= 387: return 43
+    if 388 <= amount <= 396: return 44
+    if 397 <= amount <= 405: return 45
+    if 406 <= amount <= 415: return 46
+    if 416 <= amount <= 424: return 47
+    if 425 <= amount <= 433: return 48
+    if 434 <= amount <= 442: return 49
+    if 443 <= amount <= 451: return 50
+    if 452 <= amount <= 460: return 51
+    if 461 <= amount <= 550: return 60
+    if 551 <= amount <= 571: return 65
+    if 572 <= amount <= 623: return 67
+    if 624 <= amount <= 724: return 68
+    if 725 <= amount <= 820: return 69
+    if 821 <= amount <= 922: return 70
+    if 923 <= amount <= 1000: return 100
+    if 1001 <= amount <= 2000: return 240
+    if 2001 <= amount <= 3000: return 340
+    if 3001 <= amount <= 4000: return 440
+    if 4001 <= amount <= 5000: return 500
+    
+    # Untuk amount > 5000, pola fee mengikuti kelipatan 1000 (misal 5001-6000 = 600, 6001-7000 = 700)
+    if amount > 200000: return 20000
+    i = amount // 1000
+    if amount % 1000 == 0:
+        i -= 1
+    return (i * 100) + 100
 
 SEWA_PRICES = {
     "1": {"price": 1000, "text": "1 Hari"},
@@ -62,7 +152,6 @@ def parse_duel_data(text):
     teams = {"KECIL": [], "BESAR": []}
     current_team = None
     
-    # 1. Cari semua format Array di seluruh teks (contoh: K: [23,20,50] = 93)
     for match in re.finditer(r'\b(K|B)\b[\s:.\-]*\[?([\d\s,]+)\]?\s*=\s*(\d+)', text, re.IGNORECASE):
         team_char = match.group(1).upper()
         team_name = "KECIL" if team_char.startswith("K") else "BESAR"
@@ -75,7 +164,6 @@ def parse_duel_data(text):
     if teams["KECIL"] or teams["BESAR"]:
         return teams
         
-    # 2. Jika tidak ada array, baca format nama pemain (contoh: K: HENDRA 23 P)
     for raw_line in text.split('\n'):
         line = raw_line.strip()
         if not line: continue
@@ -99,26 +187,45 @@ def parse_player_line(line, team, teams):
     if not line: return
     
     if "//" in line:
-        left_part = line.split("//", 1)[0].strip()
-        result_part = line.split("//", 1)[1].strip()
-        try: result = int(result_part.replace(".", "").replace(",", "").split()[0])
-        except: result = None
+        parts = line.split("//", 1)
+        left_part = parts[0].strip()
+        right_part = parts[1].strip() if len(parts) > 1 else ""
     else:
         left_part = line
-        result = None
+        right_part = ""
 
     is_lf = False
-    tokens = left_part.split()
-    if tokens and tokens[-1].upper() in ("LF", "P"):
-        is_lf = True
-        tokens = tokens[:-1]
+    
+    if right_part:
+        right_tokens = right_part.split()
+        if right_tokens and right_tokens[-1].upper() in ("LF", "P"):
+            is_lf = True
+            right_tokens = right_tokens[:-1]
+        right_part = " ".join(right_tokens)
+        
+    if left_part:
+        left_tokens = left_part.split()
+        if left_tokens and left_tokens[-1].upper() in ("LF", "P"):
+            is_lf = True
+            left_tokens = left_tokens[:-1]
+    else:
+        left_tokens = []
 
-    if len(tokens) < 2: return
-    try: modal = int(tokens[-1].replace(".", "").replace(",", ""))
-    except: return
+    if len(left_tokens) < 2: return
+    try: 
+        modal = int(left_tokens[-1].replace(".", "").replace(",", ""))
+    except: 
+        return
 
-    nickname = " ".join(tokens[:-1]).strip()
+    nickname = " ".join(left_tokens[:-1]).strip()
     if not nickname or re.search(r'\d', nickname): return
+
+    result = None
+    if right_part:
+        try: 
+            result = int(right_part.replace(".", "").replace(",", "").split()[0])
+        except: 
+            result = None
 
     teams[team].append({"nickname": nickname, "modal": modal, "result": result, "is_lf": is_lf})
 
@@ -212,7 +319,7 @@ def sewa_main_keyboard():
     )
     return kb
 
-# ============== /rekap (Tanpa Tombol) & /rekapwin (Dengan Tombol) ==============
+# ============== /rekap (Tanpa Tombol) & /rekapwin /win (Dengan Tombol) ==============
 @bot.message_handler(commands=['rekapwin', 'rekap', 'win', 'winrekap'])
 def cmd_rekap(message):
     chat_id = message.chat.id
@@ -224,7 +331,6 @@ def cmd_rekap(message):
     if message.chat.type not in ("group", "supergroup"):
         return safe_reply(message, "❌ Command ini hanya untuk grup.")
 
-    # Cek apakah user adalah Admin Grup atau Admin Bot
     is_user_admin = False
     if user.id in ADMIN_IDS:
         is_user_admin = True
@@ -238,7 +344,6 @@ def cmd_rekap(message):
     if not is_user_admin:
         return safe_reply(message, "❌ Maaf, perintah ini hanya bisa digunakan oleh Admin Grup.")
 
-    # Cek Premium
     if not is_premium(chat_id):
         try: member_count = bot.get_chat_member_count(chat_id)
         except: member_count = 0
@@ -246,7 +351,7 @@ def cmd_rekap(message):
             return safe_reply(message, f"❌ Fitur ini membutuhkan akses premium.\nGunakan /sewa untuk mendapatkan akses premium.")
 
     if not message.reply_to_message:
-        return safe_reply(message, "❌ Balas pesan data duel, lalu kirim /rekapwin [fee]")
+        return safe_reply(message, "❌ Balas pesan data duel, lalu kirim /win [fee]")
 
     src = message.reply_to_message.text
     if not src:
@@ -257,17 +362,25 @@ def cmd_rekap(message):
         return safe_reply(message, "❌ Format K/B tidak lengkap.")
 
     fee = 0.0
-    if len(parts) > 1:
-        try: fee = float(parts[1].replace(",", "."))
-        except: pass
+    auto_fee = False
+    
+    if cmd == 'win':
+        auto_fee = True
+    elif len(parts) > 1:
+        try: 
+            fee = float(parts[1].replace(",", "."))
+        except: 
+            pass
+    else:
+        auto_fee = True
 
-    summary = render_duel_summary(teams, fee)
+    summary = render_duel_summary(teams, fee, auto_fee)
     show_buttons = cmd in ['rekapwin', 'win', 'winrekap']
     
     if show_buttons:
         key = f"{chat_id}:{user.id}"
         data_store["pending_rekap"][key] = {
-            "teams": teams, "fee": fee, "winner": None, "score": None,
+            "teams": teams, "fee": fee, "auto_fee": auto_fee, "winner": None, "score": None,
             "browser": None, "device": None, "chat_id": chat_id, "user_id": user.id,
             "username": user.username or user.first_name, "step": "winner",
         }
@@ -276,7 +389,7 @@ def cmd_rekap(message):
     else:
         safe_reply(message, f"📊 *DATA DUEL DITERIMA*\n\n{summary}", parse_mode="Markdown")
 
-def render_duel_summary(teams, fee):
+def render_duel_summary(teams, fee, auto_fee=False):
     k_total = sum(p["modal"] for p in teams["KECIL"])
     b_total = sum(p["modal"] for p in teams["BESAR"])
     
@@ -312,7 +425,10 @@ def render_duel_summary(teams, fee):
         lines.append("")
         lines.append("*(JEMPOL = AMAN)*")
         
-    if fee > 0:
+    if auto_fee:
+        lines.append("")
+        lines.append("*💸 Fee: AUTO (Tabel Otomatis)*")
+    elif fee > 0:
         lines.append("")
         lines.append(f"*💸 Fee: {fee}%*")
         
@@ -323,7 +439,7 @@ def render_duel_summary(teams, fee):
 def cb_winner(call):
     key = f"{call.message.chat.id}:{call.from_user.id}"
     pr = data_store["pending_rekap"].get(key)
-    if not pr: return bot.answer_callback_query(call.id, "Sesi tidak ditemukan. Ulangi /rekapwin")
+    if not pr: return bot.answer_callback_query(call.id, "Sesi tidak ditemukan. Ulangi /win")
     pr["winner"] = call.data.split("rw_win_")[1]
     pr["step"] = "score"
     save_state()
@@ -403,55 +519,52 @@ def catch_device_input(message):
         finalize_rekap(pr, chat_id)
         return
 
-# ============== HITUNG OTOMATIS (BACA // HASIL) & MULTI-GAME LW ==============
+# ============== HITUNG OTOMATIS (HasilProfit = Hasil - Fee) ==============
 def finalize_rekap(pr, chat_id):
     teams = pr["teams"]
     winner = pr["winner"]
     score = pr["score"]
     fee_pct = pr["fee"]
+    auto_fee = pr.get("auto_fee", False)
     
     loser = "BESAR" if winner == "KECIL" else "KECIL"
     
     winner_modal = sum(p["modal"] for p in teams[winner])
     loser_modal = sum(p["modal"] for p in teams[loser])
+    
+    multiplier = 1.0
 
-    multiplier = 2.0 if score == "2-0" else 1.0
-    prize_pool = int(loser_modal * multiplier)
-
-    # 1. Hitung pemain yang kalah
-    for p in teams[loser]:
-        current = data_store["balances"].get(p["nickname"].lower(), 0)
-        if p["result"] is not None:
-            loss = p["modal"] - p["result"]
-            if loss < 0: loss = 0
-            new_saldo = current - loss
-        else:
-            new_saldo = current - p["modal"]
-        data_store["balances"][p["nickname"].lower()] = new_saldo
-
-    # 2. Hitung pemain yang menang
-    if winner_modal > 0:
-        for p in teams[winner]:
-            current = data_store["balances"].get(p["nickname"].lower(), 0)
+    for team_name in [winner, loser]:
+        for p in teams[team_name]:
+            current = data_store["balances"].get(p["nickname"], 0)
+            
             if p["result"] is not None:
-                profit = p["result"] - p["modal"]
-                if profit > 0 and fee_pct > 0:
-                    profit = int(profit * (1 - fee_pct/100))
-                new_saldo = current + profit
+                hasil = p["result"]
+                
+                if hasil > 0:
+                    if auto_fee:
+                        hasil -= get_auto_fee(hasil)
+                    elif fee_pct > 0:
+                        hasil = int(hasil * (1 - fee_pct/100))
+                        
+                net = hasil - p["modal"]
             else:
-                ratio = p["modal"] / winner_modal
-                gross = int(prize_pool * ratio)
-                net_winning = int(gross * (1 - fee_pct/100)) if fee_pct > 0 else gross
-                new_saldo = current + net_winning
-            data_store["balances"][p["nickname"].lower()] = new_saldo
-
-    # Bulatkan semua saldo ke kelipatan 100
-    for nick in list(data_store["balances"].keys()):
-        data_store["balances"][nick] = bulatkan_ke_kelipatan(data_store["balances"][nick])
+                if team_name == winner:
+                    share = int(loser_modal * multiplier * (p["modal"] / winner_modal)) if winner_modal > 0 else 0
+                    net = share
+                    if net > 0:
+                        if auto_fee:
+                            net -= get_auto_fee(net)
+                        elif fee_pct > 0:
+                            net = int(net * (1 - fee_pct/100))
+                else: 
+                    penalty = int(p["modal"] * multiplier)
+                    net = -penalty
+                    
+            data_store["balances"][p["nickname"]] = current + net
 
     save_state()
 
-    # Cek apakah LW sudah ada di grup ini. Jika ada, tambahkan Game baru. Jika tidak, buat LW baru.
     if data_store.get("last_win_chat_id") != chat_id or not data_store.get("last_win_data"):
         data_store["last_win_chat_id"] = chat_id
         data_store["last_win_data"] = {
@@ -461,12 +574,10 @@ def finalize_rekap(pr, chat_id):
             "games": []
         }
     else:
-        # Update data device/browser/user terbaru
         data_store["last_win_data"]["device"] = pr['device']
         data_store["last_win_data"]["browser"] = pr['browser']
         data_store["last_win_data"]["username"] = pr['username']
         
-    # Tambahkan game saat ini ke daftar games di LW
     data_store["last_win_data"]["games"].append({
         "winner": winner[0],
         "score": score,
@@ -475,43 +586,59 @@ def finalize_rekap(pr, chat_id):
     
     save_state()
 
-    # Render output LW
     output = render_lw_output(data_store["last_win_data"], data_store["balances"])
 
-    # Unpin pesan LW lama jika ada
-    old_msg_id = data_store.get("last_win_msg_id")
-    if old_msg_id:
-        try: bot.unpin_chat_message(chat_id, old_msg_id)
-        except: pass
-
-    # Kirim pesan LW baru dan pin pesan tersebut
     bot.send_message(chat_id, "✅ *Rekapwin selesai.*", parse_mode="Markdown")
     sent = bot.send_message(chat_id, output)
     try_pin_message(chat_id, sent.message_id)
     data_store["last_win_msg_id"] = sent.message_id
     save_state()
 
-    # Hapus sesi rekap yang pending
     if f"{chat_id}:{pr['user_id']}" in data_store["pending_rekap"]:
         del data_store["pending_rekap"][f"{chat_id}:{pr['user_id']}"]
     save_state()
 
-# ============== FITUR SALDO & AUTO UPDATE LW ==============
-@bot.message_handler(commands=['resetlw', 'lunas', 'tambah', 'kurangi', 'depo', 'wd', 'bulatkan'])
+# ============== FITUR SALDO, GESER, & AUTO UPDATE LW (KHUSUS ADMIN) ==============
+@bot.message_handler(commands=['resetlw', 'geser', 'lunas', 'tambah', 'kurangi', 'depo', 'wd', 'bulatkan'])
 def cmd_saldo_actions(message):
     try:
+        chat_id = message.chat.id
+        user = message.from_user
+        
+        is_user_admin = False
+        if user.id in ADMIN_IDS:
+            is_user_admin = True
+        else:
+            try:
+                chat_member = bot.get_chat_member(chat_id, user.id)
+                if chat_member.status in ['administrator', 'creator']:
+                    is_user_admin = True
+            except: pass
+
         parts = message.text.split()
         if not parts: return
-        
         cmd = parts[0].split('@')[0][1:].lower()
-        user = message.from_user.username or message.from_user.first_name
         
+        restricted_cmds = ['geser', 'lunas', 'kurangi', 'depo', 'wd', 'bulatkan']
+        
+        if cmd in restricted_cmds and not is_user_admin:
+            return safe_reply(message, "⚠️Hanya Admin Group yang bisa menggunakan Perintah ini🚫")
+            
+        if cmd == 'geser':
+            if data_store.get("last_win_msg_id"):
+                data_store["last_win_msg_id"] = None
+                data_store["last_win_chat_id"] = None
+                data_store["last_win_data"] = None
+                save_state()
+                return safe_reply(message, "✅ Data LW berhasil direset. Bot siap membuat LW baru.")
+            else:
+                return safe_reply(message, "Belum ada LAST WIN aktif yang sedang disematkan.")
+            
         if cmd == 'resetlw':
             data_store["balances"] = {}
             data_store["last_win_msg_id"] = None
             data_store["last_win_chat_id"] = None
             data_store["last_win_data"] = None
-            # RESET DEVICE DAN BROWSER JUGA AGAR DITANYAKAN ULANG SAAT REKAPWIN
             data_store["device"] = None
             data_store["browser"] = None
             save_state()
@@ -525,7 +652,7 @@ def cmd_saldo_actions(message):
                 if new != val:
                     changes.append(f"👤 {n}: {fmt_num(val)} → {fmt_num(new)}")
                     data_store["balances"][n] = new
-            msg_text = "🔁 Pembulatan:\n" + "\n".join(changes) + f"\n\n📟 Oleh: @{user}" if changes else "✅ Semua saldo sudah bulat."
+            msg_text = "🔁 Pembulatan:\n" + "\n".join(changes) + f"\n\n📟 Oleh: @{user.username or user.first_name}" if changes else "✅ Semua saldo sudah bulat."
             save_state()
             bot.send_message(message.chat.id, msg_text)
             update_last_win_message()
@@ -538,34 +665,44 @@ def cmd_saldo_actions(message):
         if cmd in ['tambah', 'kurangi', 'depo'] and len(parts) < 3: 
             return safe_reply(message, f"❌ Format: /{cmd} [username] [jumlah]")
 
-        nick = parts[1].strip().lower()
+        nick_input = parts[1].strip()
+        nick_target = None
+        for bal_nick in data_store["balances"].keys():
+            if bal_nick.lower() == nick_input.lower():
+                nick_target = bal_nick
+                break
+        
         amt = 0
         if cmd in ['tambah', 'kurangi', 'depo']:
             try: amt = int(parts[2].replace(".", ""))
             except: return safe_reply(message, "❌ Jumlah tidak valid.")
         
         if cmd == 'lunas':
-            if nick not in data_store["balances"]: return safe_reply(message, "❌ Pemain tidak ditemukan.")
-            old = data_store["balances"][nick]
-            data_store["balances"][nick] = 0
-            msg_text = f"✅ Hutang dilunasi.\n👤 {nick}: {fmt_num(old)} → 0\n📟 Oleh: @{user}"
+            if not nick_target: return safe_reply(message, "❌ Pemain tidak ditemukan.")
+            old = data_store["balances"][nick_target]
+            data_store["balances"][nick_target] = 0
+            msg_text = f"✅ Hutang dilunasi.\n👤 {nick_target}: {fmt_num(old)} → 0\n📟 Oleh: @{user.username or user.first_name}"
             
         elif cmd in ['tambah', 'depo']:
-            old = data_store["balances"].get(nick, 0)
-            data_store["balances"][nick] = old + amt
+            if not nick_target:
+                nick_target = nick_input 
+            old = data_store["balances"].get(nick_target, 0)
+            data_store["balances"][nick_target] = old + amt
             if cmd == 'depo':
-                msg_text = f"✅ Saldo {nick.upper()} berhasil didepo {fmt_num(amt)}."
+                msg_text = f"✅ Saldo {nick_target.upper()} berhasil didepo {fmt_num(amt)}."
             else:
-                msg_text = f"➕ Saldo ditambah.\n👤 {nick}: {fmt_num(old)} → {fmt_num(data_store['balances'][nick])}\n📟 Oleh: @{user}"
+                msg_text = f"➕ Saldo ditambah.\n👤 {nick_target}: {fmt_num(old)} → {fmt_num(data_store['balances'][nick_target])}\n📟 Oleh: @{user.username or user.first_name}"
             
         elif cmd == 'kurangi':
-            old = data_store["balances"].get(nick, 0)
-            data_store["balances"][nick] = old - amt
-            msg_text = f"➖ Saldo dikurangi.\n👤 {nick}: {fmt_num(old)} → {fmt_num(data_store['balances'][nick])}\n📟 Oleh: @{user}"
+            if not nick_target: return safe_reply(message, "❌ Pemain tidak ditemukan.")
+            old = data_store["balances"][nick_target]
+            data_store["balances"][nick_target] = old - amt
+            msg_text = f"➖ Saldo dikurangi.\n👤 {nick_target}: {fmt_num(old)} → {fmt_num(data_store['balances'][nick_target])}\n📟 Oleh: @{user.username or user.first_name}"
             
         elif cmd == 'wd':
-            saldo = data_store["balances"].get(nick, 0)
-            msg_text = f"💳 Saldo {nick}: {fmt_num(saldo)}" if saldo > 0 else (f"⚠️ Hutang {nick}: {fmt_num(abs(saldo))}" if saldo < 0 else f"❌ {nick} tidak punya saldo.")
+            if not nick_target: return safe_reply(message, "❌ Pemain tidak ditemukan.")
+            saldo = data_store["balances"].get(nick_target, 0)
+            msg_text = f"💳 Saldo {nick_target}: {fmt_num(saldo)}" if saldo > 0 else (f"⚠️ Hutang {nick_target}: {fmt_num(abs(saldo))}" if saldo < 0 else f"❌ {nick_target} tidak punya saldo.")
             return safe_reply(message, msg_text)
 
         save_state()
@@ -695,28 +832,27 @@ def cmd_upgrade(message):
 def cmd_help(message):
     safe_reply(message,
         "📖 *PANDUAN BOT REKAP WIN By Angga Official*\n\n"
-        "1️⃣ Perintah Utama:\n"
+        "1️⃣ Perintah Utama Rekap:\n"
         "• /rekap - Cek Data Duel (Tanpa Tombol)\n"
-        "• /winrekap - Mendapatkan Data Rekap (Dengan Tombol)\n"
-        "• /rekapwin [fee] - Rekap duel dengan potongan fee\n"
-        "• /win [fee] - Sama seperti /rekapwin\n\n"
-        "2️⃣ Format Input Data Duel:\n"
-        "```\nK: HENDRA 23 P\nNIP 20\n\nB: ROB 50\n```\nAtau format Array:\n```\nK: [18,200] = 218\n```\n\n"
-        "3️⃣ Fitur Saldo:\n"
-        "• /resetlw - Reset game (Mereset DEV & ROL juga)\n"
-        "• /lunas [user] - Lunasi hutang\n"
-        "• /tambah [user] [jumlah]\n"
-        "• /kurangi [user] [jumlah]\n"
-        "• /depo [user] [jumlah]\n"
-        "• /wd [user] - Cek saldo\n"
-        "• /bulatkan - Bulatkan ke 100\n\n"
-        "4️⃣ Fitur Premium:\n"
-        "• /sewa - Beli premium (QRIS)\n"
-        "• /upgrade [id] [paket] [hari] - (Admin)\n\n"
-        "❗ Bot harus jadi admin untuk pin pesan.",
+        "• /win - Rekap Win Dengan Parameter Auto Fee (Dengan Tombol)\n"
+        "• /win [fee] - Rekap duel dengan potongan fee manual (contoh: /win 5.5)\n"
+        "• /winrekap - Mendapatkan Data Rekap\n\n"
+        "2️⃣ Fitur Saldo & LW:\n"
+        "• /resetlw - Reset History & Saldo Game (Mereset DEV & ROL juga)\n"
+        "• /geser - Mereset data LW agar bot membuat LW baru (Unpin manual)\n"
+        "• /lunas [user] - Lunasi hutang pemain\n"
+        "• /tambah [user] [jumlah] - Tambah saldo pemain\n"
+        "• /kurangi [user] [jumlah] - Kurangi saldo pemain\n"
+        "• /depo [user] [jumlah] - Deposit saldo pemain\n"
+        "• /wd [user] - Cek saldo pemain\n"
+        "• /bulatkan - Bulatkan semua saldo ke kelipatan 100\n\n"
+        "3️⃣ Fitur Premium:\n"
+        "• /sewa - Beli akses premium (QRIS)\n"
+        "• /upgrade [id_grup] XVIP [hari] - Aktivasi premium (Khusus Admin Bot)\n\n"
+        "❗ *Bot harus menjadi Admin Grup untuk bisa menyematkan (pin) pesan LW.*\n"
+        "❗ *Perintah Rekap & Saldo hanya bisa digunakan oleh Admin Grup.*",
         parse_mode="Markdown")
 
 if __name__ == "__main__":
-    print("🤖 Bot REKAP By Angga Official berjalan...")
-    # skip_pending=True agar bot tidak memproses pesan lama saat baru dinyalakan
+    print("🤖 Bot berjalan...")
     bot.infinity_polling(skip_pending=True)
