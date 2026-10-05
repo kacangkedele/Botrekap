@@ -157,7 +157,8 @@ def render_lw_output(lw_data, balances):
     output += f"*🌐ROL: {lw_data['browser']}*\n\n"
     output += f"*LAST WIN : (@{lw_data['username']})*\n"
     
-    for i, game in enumerate(lw_data.get('games', [])):
+    games = lw_data.get('games', [])
+    for i, game in enumerate(games):
         output += f"*GAME {i+1} : {game['winner']} {game['score']} {fmt_num(game['modal'])}*\n"
         
     output += f"\n*💰SALDO PEMAIN : ({fmt_num(total_saldo)})*\n"
@@ -434,7 +435,7 @@ def render_duel_summary(teams, fee, auto_fee=False):
         diff = b_total - k_total
         lines.append(f"*🐠 K masih kekurangan {diff} untuk menyamai B.*")
         lines.append("")
-        lines.append(f"*💰 Saldo Anda seharusnya: {k_total + b_total} K*")
+        lines.append(f"*💰 Saldo Anda seharusnya: {k_total + b_total} B*")
         lines.append("")
         lines.append(f"*K -{diff} ALL // ECER*")
     else:
@@ -593,24 +594,30 @@ def finalize_rekap(pr, chat_id):
             data_store["balances"][nick_target] = current + net
 
     data_store["total_fee"] = data_store.get("total_fee", 0) + total_fee_this_game
-    save_state()
-
-    if data_store.get("last_win_chat_id") != chat_id or not data_store.get("last_win_data"):
-        data_store["last_win_chat_id"] = chat_id
-        data_store["last_win_data"] = {
+    
+    # LOGIKA PENYIMPANAN LW YANG DIPERBAIKI
+    lw_data = data_store.get("last_win_data")
+    
+    if not lw_data or data_store.get("last_win_chat_id") != chat_id:
+        # Buat data LW baru jika tidak ada atau chat id berbeda
+        lw_data = {
             "device": pr['device'],
             "browser": pr['browser'],
             "wd_time": pr.get('wd_time'),
             "username": pr['username'],
             "games": []
         }
+        data_store["last_win_data"] = lw_data
+        data_store["last_win_chat_id"] = chat_id
     else:
-        data_store["last_win_data"]["device"] = pr['device']
-        data_store["last_win_data"]["browser"] = pr['browser']
-        data_store["last_win_data"]["wd_time"] = pr.get('wd_time')
-        data_store["last_win_data"]["username"] = pr['username']
+        # Update data device/browser/wd_time/username jika sudah ada
+        lw_data["device"] = pr['device']
+        lw_data["browser"] = pr['browser']
+        lw_data["wd_time"] = pr.get('wd_time')
+        lw_data["username"] = pr['username']
         
-    data_store["last_win_data"]["games"].append({
+    # Tambahkan game saat ini ke daftar games
+    lw_data["games"].append({
         "winner": winner[0],
         "score": score,
         "modal": loser_modal
@@ -618,9 +625,10 @@ def finalize_rekap(pr, chat_id):
     
     save_state()
 
-    output = render_lw_output(data_store["last_win_data"], data_store["balances"])
+    output = render_lw_output(lw_data, data_store["balances"])
 
-    bot.send_message(chat_id, "✅ *Rekapwin selesai.*", parse_mode="Markdown")
+    total_games = len(lw_data['games'])
+    bot.send_message(chat_id, f"✅ *Rekapwin selesai. Total Game: {total_games}*", parse_mode="Markdown")
     sent = bot.send_message(chat_id, output, parse_mode="Markdown")
     try_pin_message(chat_id, sent.message_id)
     data_store["last_win_msg_id"] = sent.message_id
@@ -919,7 +927,6 @@ def cmd_help(message):
         parse_mode="Markdown")
 
 # ============== HANDLER UTAMA (Anti Link, Anti Forward, Input Text/Foto) ==============
-# Handler ini diletakkan di paling bawah agar command di atas diproses lebih dulu oleh telebot
 @bot.message_handler(content_types=['text', 'photo', 'video', 'document', 'forward'])
 def handle_all_messages(message):
     chat_id = message.chat.id
@@ -998,5 +1005,5 @@ def handle_all_messages(message):
             return
 
 if __name__ == "__main__":
-    print("🤖 Bot REKAP By Angga Official sedang berjalan...")
+    print("🤖 Bot berjalan...")
     bot.infinity_polling(skip_pending=True)
