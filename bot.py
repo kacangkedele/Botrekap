@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 # ============== KONFIGURASI ==============
 BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"  # Ganti dengan token bot Anda
 ADMIN_IDS = [123456789]  # Ganti dengan ID Telegram Anda
-MIN_MEMBER_PREMIUM = 5
+MIN_MEMBER_PREMIUM = 500
 QRIS_PHOTO_PATH = "qris.png"  # Pastikan file qris.png ada di folder yang sama
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None)
@@ -392,7 +392,8 @@ def cmd_rekap(message):
     fee = 0.0
     auto_fee = False
     
-    if cmd == 'win':
+    # /win, /rekapwin, /winrekap SELALU memakai Auto Fee
+    if cmd in ['win', 'rekapwin', 'winrekap']:
         auto_fee = True
     elif len(parts) > 1:
         try: 
@@ -441,7 +442,7 @@ def render_duel_summary(teams, fee, auto_fee=False):
         diff = b_total - k_total
         lines.append(f"*🐠 K masih kekurangan {diff} untuk menyamai B.*")
         lines.append("")
-        lines.append(f"*💰 Saldo Anda seharusnya: {k_total + b_total} K*")
+        lines.append(f"*💰 Saldo Anda seharusnya: {k_total + b_total} B*")
         lines.append("")
         lines.append(f"*K -{diff} ALL // ECER*")
     else:
@@ -547,7 +548,7 @@ def catch_device_input(message):
         finalize_rekap(pr, chat_id)
         return
 
-# ============== HITUNG OTOMATIS (Fee Disembunyikan & Dikirim ke PM Admin) ==============
+# ============== HITUNG OTOMATIS ((Modal + Uang Lawan) - Fee = Saldo) ==============
 def finalize_rekap(pr, chat_id):
     teams = pr["teams"]
     winner = pr["winner"]
@@ -570,29 +571,30 @@ def finalize_rekap(pr, chat_id):
             fee_dipotong = 0
             
             if p["result"] is not None:
-                hasil = p["result"]
-                
-                if hasil > 0:
-                    if auto_fee:
-                        fee_dipotong = get_auto_fee(hasil)
-                        hasil -= fee_dipotong
-                    elif fee_pct > 0:
-                        fee_dipotong = int(hasil * (fee_pct/100))
-                        hasil = int(hasil * (1 - fee_pct/100))
-                        
-                # Saldo langsung diisi dengan Hasil Bersih (Hasil - Fee)
-                net = hasil
-                
-                # Catat untuk laporan PM Admin
-                if fee_dipotong > 0:
-                    fee_logs.append(f"👤 {nick_target}\n   Hasil: {fmt_num(p['result'])} - Fee: {fmt_num(fee_dipotong)} = {fmt_num(hasil)}")
+                total_masuk = p["result"]
             else:
                 if team_name == winner:
                     share = int(loser_modal * multiplier * (p["modal"] / winner_modal)) if winner_modal > 0 else 0
-                    net = share
-                else: 
-                    penalty = int(p["modal"] * multiplier)
-                    net = -penalty
+                    total_masuk = p["modal"] + share
+                else:
+                    total_masuk = 0
+                    
+            if total_masuk > 0:
+                if auto_fee:
+                    fee_dipotong = get_auto_fee(total_masuk)
+                    net_masuk = total_masuk - fee_dipotong
+                elif fee_pct > 0:
+                    fee_dipotong = int(total_masuk * (fee_pct/100))
+                    net_masuk = int(total_masuk * (1 - fee_pct/100))
+                else:
+                    net_masuk = total_masuk
+            else:
+                net_masuk = 0
+                
+            if team_name == winner:
+                net = net_masuk
+            else:
+                net = net_masuk - p["modal"]
                     
             data_store["balances"][nick_target] = current + net
 
