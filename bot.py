@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 # ============== KONFIGURASI ==============
 BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"  # Ganti dengan token bot Anda
 ADMIN_IDS = [123456789]  # Ganti dengan ID Telegram Anda
-MIN_MEMBER_PREMIUM = 500
+MIN_MEMBER_PREMIUM = 5
 QRIS_PHOTO_PATH = "qris.png"  # Pastikan file qris.png ada di folder yang sama
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode=None)
@@ -435,7 +435,7 @@ def render_duel_summary(teams, fee, auto_fee=False):
         diff = b_total - k_total
         lines.append(f"*🐠 K masih kekurangan {diff} untuk menyamai B.*")
         lines.append("")
-        lines.append(f"*💰 Saldo Anda seharusnya: {k_total + b_total} B*")
+        lines.append(f"*💰 Saldo Anda seharusnya: {k_total + b_total} K*")
         lines.append("")
         lines.append(f"*K -{diff} ALL // ECER*")
     else:
@@ -1005,5 +1005,5 @@ def handle_all_messages(message):
             return
 
 if __name__ == "__main__":
-    print("🤖 Bot berjalan...")
+    print("🤖 Bot REKAP By Angga Official sedang berjalan...")
     bot.infinity_polling(skip_pending=True)
